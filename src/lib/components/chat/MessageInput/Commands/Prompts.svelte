@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { prompts } from '$lib/stores';
+	import { prompts, settings, user } from '$lib/stores';
 	import {
-		findWordIndices,
+		extractCurlyBraceWords,
 		getUserPosition,
 		getFormattedDate,
 		getFormattedTime,
@@ -74,8 +74,20 @@
 		}
 
 		if (command.content.includes('{{USER_LOCATION}}')) {
-			const location = await getUserPosition();
+			let location;
+			try {
+				location = await getUserPosition();
+			} catch (error) {
+				toast.error($i18n.t('Location access not allowed'));
+				location = 'LOCATION_UNKNOWN';
+			}
 			text = text.replaceAll('{{USER_LOCATION}}', String(location));
+		}
+
+		if (command.content.includes('{{USER_NAME}}')) {
+			console.log($user);
+			const name = $user?.name || 'User';
+			text = text.replaceAll('{{USER_NAME}}', name);
 		}
 
 		if (command.content.includes('{{USER_LANGUAGE}}')) {
@@ -108,23 +120,56 @@
 			text = text.replaceAll('{{CURRENT_WEEKDAY}}', weekday);
 		}
 
-		prompt = text;
+		const lines = prompt.split('\n');
+		const lastLine = lines.pop();
 
-		const chatInputElement = document.getElementById('chat-textarea');
+		const lastLineWords = lastLine.split(' ');
+		const lastWord = lastLineWords.pop();
+
+		if ($settings?.richTextInput ?? true) {
+			lastLineWords.push(
+				`${text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replaceAll('\n', '<br/>')}`
+			);
+
+			lines.push(lastLineWords.join(' '));
+			prompt = lines.join('<br/>');
+		} else {
+			lastLineWords.push(text);
+			lines.push(lastLineWords.join(' '));
+			prompt = lines.join('\n');
+		}
+
+		const chatInputContainerElement = document.getElementById('chat-input-container');
+		const chatInputElement = document.getElementById('chat-input');
 
 		await tick();
-
-		chatInputElement.style.height = '';
-		chatInputElement.style.height = Math.min(chatInputElement.scrollHeight, 200) + 'px';
-
-		chatInputElement?.focus();
+		if (chatInputContainerElement) {
+			chatInputContainerElement.scrollTop = chatInputContainerElement.scrollHeight;
+		}
 
 		await tick();
+		if (chatInputElement) {
+			chatInputElement.focus();
+			chatInputElement.dispatchEvent(new Event('input'));
 
-		const words = findWordIndices(prompt);
-		if (words.length > 0) {
-			const word = words.at(0);
-			chatInputElement.setSelectionRange(word?.startIndex, word.endIndex + 1);
+			const words = extractCurlyBraceWords(prompt);
+
+			if (words.length > 0) {
+				const word = words.at(0);
+				const fullPrompt = prompt;
+
+				prompt = prompt.substring(0, word?.endIndex + 1);
+				await tick();
+
+				chatInputElement.scrollTop = chatInputElement.scrollHeight;
+
+				prompt = fullPrompt;
+				await tick();
+
+				chatInputElement.setSelectionRange(word?.startIndex, word.endIndex + 1);
+			} else {
+				chatInputElement.scrollTop = chatInputElement.scrollHeight;
+			}
 		}
 	};
 </script>
@@ -132,17 +177,13 @@
 {#if filteredPrompts.length > 0}
 	<div
 		id="commands-container"
-		class="pl-2 pr-14 mb-3 text-left w-full absolute bottom-0 left-0 right-0 z-10"
+		class="px-2 mb-2 text-left w-full absolute bottom-0 left-0 right-0 z-10"
 	>
-		<div class="flex w-full dark:border dark:border-gray-850 rounded-lg">
-			<div class="  bg-gray-50 dark:bg-gray-850 w-10 rounded-l-lg text-center">
-				<div class=" text-lg font-medium mt-2">/</div>
-			</div>
-
+		<div class="flex w-full rounded-xl border border-gray-100 dark:border-gray-850">
 			<div
-				class="max-h-60 flex flex-col w-full rounded-r-lg bg-white dark:bg-gray-900 dark:text-gray-100"
+				class="max-h-60 flex flex-col w-full rounded-xl bg-white dark:bg-gray-900 dark:text-gray-100"
 			>
-				<div class="m-1 overflow-y-auto p-1 rounded-r-lg space-y-0.5 scrollbar-hidden">
+				<div class="m-1 overflow-y-auto p-1 space-y-0.5 scrollbar-hidden">
 					{#each filteredPrompts as prompt, promptIdx}
 						<button
 							class=" px-3 py-1.5 rounded-xl w-full text-left {promptIdx === selectedPromptIdx
@@ -169,7 +210,7 @@
 				</div>
 
 				<div
-					class=" px-2 pb-1 text-xs text-gray-600 dark:text-gray-100 bg-white dark:bg-gray-900 rounded-br-xl flex items-center space-x-1"
+					class=" px-2 pt-0.5 pb-1 text-xs text-gray-600 dark:text-gray-100 bg-white dark:bg-gray-900 rounded-b-xl flex items-center space-x-1"
 				>
 					<div>
 						<svg

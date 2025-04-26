@@ -5,10 +5,29 @@ from pathlib import Path
 
 import typer
 import uvicorn
+from typing import Optional
+from typing_extensions import Annotated
 
 app = typer.Typer()
 
 KEY_FILE = Path.cwd() / ".webui_secret_key"
+
+
+def version_callback(value: bool):
+    if value:
+        from open_webui.env import VERSION
+
+        typer.echo(f"Open WebUI version: {VERSION}")
+        raise typer.Exit()
+
+
+@app.command()
+def main(
+    version: Annotated[
+        Optional[bool], typer.Option("--version", callback=version_callback)
+    ] = None,
+):
+    pass
 
 
 @app.command()
@@ -54,8 +73,15 @@ def serve(
             os.environ["LD_LIBRARY_PATH"] = ":".join(LD_LIBRARY_PATH)
 
     import open_webui.main  # we need set environment variables before importing main
+    from open_webui.env import UVICORN_WORKERS  # Import the workers setting
 
-    uvicorn.run(open_webui.main.app, host=host, port=port, forwarded_allow_ips="*")
+    uvicorn.run(
+        open_webui.main.app,
+        host=host,
+        port=port,
+        forwarded_allow_ips="*",
+        workers=UVICORN_WORKERS,
+    )
 
 
 @app.command()

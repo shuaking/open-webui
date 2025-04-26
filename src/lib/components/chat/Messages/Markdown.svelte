@@ -11,10 +11,15 @@
 
 	const dispatch = createEventDispatcher();
 
-	export let id;
+	export let id = '';
 	export let content;
 	export let model = null;
 	export let save = false;
+
+	export let sourceIds = [];
+
+	export let onSourceClick = () => {};
+	export let onTaskClick = () => {};
 
 	let tokens = [];
 
@@ -28,7 +33,7 @@
 	$: (async () => {
 		if (content) {
 			tokens = marked.lexer(
-				replaceTokens(processResponseContent(content), model?.name, $user?.name)
+				replaceTokens(processResponseContent(content), sourceIds, model?.name, $user?.name)
 			);
 		}
 	})();
@@ -39,6 +44,8 @@
 		{tokens}
 		{id}
 		{save}
+		{onTaskClick}
+		{onSourceClick}
 		on:update={(e) => {
 			dispatch('update', e.detail);
 		}}

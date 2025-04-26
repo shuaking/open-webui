@@ -6,10 +6,20 @@
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
+	import jsPDF from 'jspdf';
+	import html2canvas from 'html2canvas-pro';
+
 	import { downloadChatAsPDF } from '$lib/apis/utils';
 	import { copyToClipboard, createMessagesList } from '$lib/utils';
 
-	import { showOverview, showControls, showArtifacts, mobile } from '$lib/stores';
+	import {
+		showOverview,
+		showControls,
+		showArtifacts,
+		mobile,
+		temporaryChatEnabled,
+		theme
+	} from '$lib/stores';
 	import { flyAndScale } from '$lib/utils/transitions';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
@@ -18,6 +28,7 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import AdjustmentsHorizontal from '$lib/components/icons/AdjustmentsHorizontal.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
+	import { getChatById } from '$lib/apis/chats';
 
 	const i18n = getContext('i18n');
 
@@ -31,9 +42,8 @@
 	export let onClose: Function = () => {};
 
 	const getChatAsText = async () => {
-		const _chat = chat.chat;
-
-		const messages = createMessagesList(_chat.history, _chat.history.currentId);
+		const history = chat.chat.history;
+		const messages = createMessagesList(history, history.currentId);
 		const chatText = messages.reduce((a, message, i, arr) => {
 			return `${a}### ${message.role.toUpperCase()}\n${message.content}\n\n`;
 		}, '');
@@ -52,37 +62,93 @@
 	};
 
 	const downloadPdf = async () => {
-		const _chat = chat.chat;
-		const messages = createMessagesList(_chat.history, _chat.history.currentId);
+		const containerElement = document.getElementById('messages-container');
 
-		console.log('download', chat);
+		if (containerElement) {
+			try {
+				const isDarkMode = document.documentElement.classList.contains('dark');
 
-		const blob = await downloadChatAsPDF(_chat.title, messages);
+				console.log('isDarkMode', isDarkMode);
 
-		// Create a URL for the blob
-		const url = window.URL.createObjectURL(blob);
+				// Define a fixed virtual screen size
+				const virtualWidth = 800; // Fixed width (adjust as needed)
+				// Clone the container to avoid layout shifts
+				const clonedElement = containerElement.cloneNode(true);
+				clonedElement.classList.add('text-black');
+				clonedElement.classList.add('dark:text-white');
+				clonedElement.style.width = `${virtualWidth}px`; // Apply fixed width
+				clonedElement.style.height = 'auto'; // Allow content to expand
 
-		// Create a link element to trigger the download
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = `chat-${_chat.title}.pdf`;
+				document.body.appendChild(clonedElement); // Temporarily add to DOM
 
-		// Append the link to the body and click it programmatically
-		document.body.appendChild(a);
-		a.click();
+				// Render to canvas with predefined width
+				const canvas = await html2canvas(clonedElement, {
+					backgroundColor: isDarkMode ? '#000' : '#fff',
+					useCORS: true,
+					scale: 2, // Keep at 1x to avoid unexpected enlargements
+					width: virtualWidth, // Set fixed virtual screen width
+					windowWidth: virtualWidth // Ensure consistent rendering
+				});
 
-		// Remove the link from the body
-		document.body.removeChild(a);
+				document.body.removeChild(clonedElement); // Clean up temp element
 
-		// Revoke the URL to release memory
-		window.URL.revokeObjectURL(url);
+				const imgData = canvas.toDataURL('image/png');
+
+				// A4 page settings
+				const pdf = new jsPDF('p', 'mm', 'a4');
+				const imgWidth = 210; // A4 width in mm
+				const pageHeight = 297; // A4 height in mm
+
+				// Maintain aspect ratio
+				const imgHeight = (canvas.height * imgWidth) / canvas.width;
+				let heightLeft = imgHeight;
+				let position = 0;
+
+				// Set page background for dark mode
+				if (isDarkMode) {
+					pdf.setFillColor(0, 0, 0);
+					pdf.rect(0, 0, imgWidth, pageHeight, 'F'); // Apply black bg
+				}
+
+				pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+				heightLeft -= pageHeight;
+
+				// Handle additional pages
+				while (heightLeft > 0) {
+					position -= pageHeight;
+					pdf.addPage();
+
+					if (isDarkMode) {
+						pdf.setFillColor(0, 0, 0);
+						pdf.rect(0, 0, imgWidth, pageHeight, 'F');
+					}
+
+					pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+					heightLeft -= pageHeight;
+				}
+
+				pdf.save(`chat-${chat.chat.title}.pdf`);
+			} catch (error) {
+				console.error('Error generating PDF', error);
+			}
+		}
 	};
 
 	const downloadJSONExport = async () => {
-		let blob = new Blob([JSON.stringify([chat])], {
-			type: 'application/json'
-		});
-		saveAs(blob, `chat-export-${Date.now()}.json`);
+		if (chat.id) {
+			let chatObj = null;
+
+			if (chat.id === 'local' || $temporaryChatEnabled) {
+				chatObj = chat;
+			} else {
+				chatObj = await getChatById(localStorage.token, chat.id);
+			}
+
+			let blob = new Blob([JSON.stringify([chatObj])], {
+				type: 'application/json'
+			});
+			saveAs(blob, `chat-export-${Date.now()}.json`);
+		}
 	};
 </script>
 
@@ -97,7 +163,7 @@
 
 	<div slot="content">
 		<DropdownMenu.Content
-			class="w-full max-w-[200px] rounded-xl px-1 py-1.5 border border-gray-300/30 dark:border-gray-700/50 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
+			class="w-full max-w-[200px] rounded-xl px-1 py-1.5  z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
 			sideOffset={8}
 			side="bottom"
 			align="end"
@@ -146,6 +212,30 @@
 				</DropdownMenu.Item>
 			{/if}
 
+			{#if !$temporaryChatEnabled}
+				<DropdownMenu.Item
+					class="flex gap-2 items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+					id="chat-share-button"
+					on:click={() => {
+						shareHandler();
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 24 24"
+						fill="currentColor"
+						class="size-4"
+					>
+						<path
+							fill-rule="evenodd"
+							d="M15.75 4.5a3 3 0 1 1 .825 2.066l-8.421 4.679a3.002 3.002 0 0 1 0 1.51l8.421 4.679a3 3 0 1 1-.729 1.31l-8.421-4.678a3 3 0 1 1 0-4.132l8.421-4.679a3 3 0 0 1-.096-.755Z"
+							clip-rule="evenodd"
+						/>
+					</svg>
+					<div class="flex items-center">{$i18n.t('Share')}</div>
+				</DropdownMenu.Item>
+			{/if}
+
 			<DropdownMenu.Item
 				class="flex gap-2 items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
 				id="chat-overview-button"
@@ -172,45 +262,6 @@
 				<div class="flex items-center">{$i18n.t('Artifacts')}</div>
 			</DropdownMenu.Item>
 
-			<DropdownMenu.Item
-				class="flex gap-2 items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
-				id="chat-copy-button"
-				on:click={async () => {
-					const res = await copyToClipboard(await getChatAsText()).catch((e) => {
-						console.error(e);
-					});
-
-					if (res) {
-						toast.success($i18n.t('Copied to clipboard'));
-					}
-				}}
-			>
-				<Clipboard className=" size-4" strokeWidth="1.5" />
-				<div class="flex items-center">{$i18n.t('Copy')}</div>
-			</DropdownMenu.Item>
-
-			<DropdownMenu.Item
-				class="flex gap-2 items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
-				id="chat-share-button"
-				on:click={() => {
-					shareHandler();
-				}}
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 24 24"
-					fill="currentColor"
-					class="size-4"
-				>
-					<path
-						fill-rule="evenodd"
-						d="M15.75 4.5a3 3 0 1 1 .825 2.066l-8.421 4.679a3.002 3.002 0 0 1 0 1.51l8.421 4.679a3 3 0 1 1-.729 1.31l-8.421-4.678a3 3 0 1 1 0-4.132l8.421-4.679a3 3 0 0 1-.096-.755Z"
-						clip-rule="evenodd"
-					/>
-				</svg>
-				<div class="flex items-center">{$i18n.t('Share')}</div>
-			</DropdownMenu.Item>
-
 			<DropdownMenu.Sub>
 				<DropdownMenu.SubTrigger
 					class="flex gap-2 items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
@@ -233,7 +284,7 @@
 					<div class="flex items-center">{$i18n.t('Download')}</div>
 				</DropdownMenu.SubTrigger>
 				<DropdownMenu.SubContent
-					class="w-full rounded-lg px-1 py-1.5 border border-gray-300/30 dark:border-gray-700/50 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
+					class="w-full rounded-xl px-1 py-1.5 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
 					transition={flyAndScale}
 					sideOffset={8}
 				>
@@ -265,11 +316,30 @@
 				</DropdownMenu.SubContent>
 			</DropdownMenu.Sub>
 
-			<hr class="border-gray-100 dark:border-gray-800 mt-2.5 mb-1.5" />
+			<DropdownMenu.Item
+				class="flex gap-2 items-center px-3 py-2 text-sm  cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md"
+				id="chat-copy-button"
+				on:click={async () => {
+					const res = await copyToClipboard(await getChatAsText()).catch((e) => {
+						console.error(e);
+					});
 
-			<div class="flex p-1">
-				<Tags chatId={chat.id} />
-			</div>
+					if (res) {
+						toast.success($i18n.t('Copied to clipboard'));
+					}
+				}}
+			>
+				<Clipboard className=" size-4" strokeWidth="1.5" />
+				<div class="flex items-center">{$i18n.t('Copy')}</div>
+			</DropdownMenu.Item>
+
+			{#if !$temporaryChatEnabled}
+				<hr class="border-gray-100 dark:border-gray-850 my-0.5" />
+
+				<div class="flex p-1">
+					<Tags chatId={chat.id} />
+				</div>
+			{/if}
 		</DropdownMenu.Content>
 	</div>
 </Dropdown>

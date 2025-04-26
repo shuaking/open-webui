@@ -32,18 +32,27 @@ type ChunkConfigForm = {
 	chunk_overlap: number;
 };
 
+type DocumentIntelligenceConfigForm = {
+	key: string;
+	endpoint: string;
+};
+
 type ContentExtractConfigForm = {
 	engine: string;
 	tika_server_url: string | null;
+	document_intelligence_config: DocumentIntelligenceConfigForm | null;
 };
 
 type YoutubeConfigForm = {
 	language: string[];
 	translation?: string | null;
+	proxy_url: string;
 };
 
 type RAGConfigForm = {
-	pdf_extract_images?: boolean;
+	PDF_EXTRACT_IMAGES?: boolean;
+	ENABLE_GOOGLE_DRIVE_INTEGRATION?: boolean;
+	ENABLE_ONEDRIVE_INTEGRATION?: boolean;
 	chunk?: ChunkConfigForm;
 	content_extraction?: ContentExtractConfigForm;
 	web_loader_ssl_verification?: boolean;
@@ -78,33 +87,6 @@ export const updateRAGConfig = async (token: string, payload: RAGConfigForm) => 
 	}
 
 	return res;
-};
-
-export const getRAGTemplate = async (token: string) => {
-	let error = null;
-
-	const res = await fetch(`${RETRIEVAL_API_BASE_URL}/template`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.log(err);
-			error = err.detail;
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res?.template ?? '';
 };
 
 export const getQuerySettings = async (token: string) => {
@@ -200,13 +182,13 @@ export const getEmbeddingConfig = async (token: string) => {
 type OpenAIConfigForm = {
 	key: string;
 	url: string;
-	batch_size: number;
 };
 
 type EmbeddingModelUpdateForm = {
 	openai_config?: OpenAIConfigForm;
 	embedding_engine: string;
 	embedding_model: string;
+	embedding_batch_size?: number;
 };
 
 export const updateEmbeddingConfig = async (token: string, payload: EmbeddingModelUpdateForm) => {
